@@ -1,4 +1,6 @@
+flask
+flask-cors
 requests
 beautifulsoup4
-openai
-pydantic
+google-generativeai
+gunicorn
