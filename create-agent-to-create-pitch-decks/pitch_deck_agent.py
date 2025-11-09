@@ -5,12 +5,14 @@ Fully self-hosted, free API for your Vercel frontend:
 https://ai-fundraising-support.vercel.app
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import os
+import io
 import requests
 from bs4 import BeautifulSoup
 import google.generativeai as genai
+from fpdf import FPDF
 from presenton_core.app import presenton_app, generate_presentation as local_generate
 
 # ---------------- FLASK APP ---------------- #
@@ -29,6 +31,10 @@ if not GEMINI_API_KEY:
 
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(GEMINI_MODEL)
+
+# ---------------- GLOBAL MEMORY ---------------- #
+last_generated_structure = None
+last_company_info = None
 
 # ---------------- SCRAPER ---------------- #
 def fetch_company_info(url: str):
@@ -93,6 +99,8 @@ Keep it concise, insightful, and professionally structured.
 @app.route("/generate", methods=["POST"])
 def generate_api():
     """Main endpoint for frontend to generate pitch decks"""
+    global last_generated_structure, last_company_info
+
     try:
         data = request.get_json(force=True)
         company_url = data.get("url")
@@ -108,7 +116,7 @@ def generate_api():
         structure = generate_pitch_deck(company_info)
 
         print("🎨 Using internal Presenton simulation...")
-        # ✅ Call Presenton generator internally (no localhost call)
+        # ✅ Simulate Presenton response
         with app.test_request_context(json={
             "content": structure,
             "n_slides": 10,
@@ -116,17 +124,66 @@ def generate_api():
         }):
             result = local_generate().get_json()
 
+        # Store the last generated result in memory
+        last_generated_structure = structure
+        last_company_info = company_info
+
         return jsonify({
             "success": True,
             "company_info": company_info,
             "deck_structure": structure,
-            "download_url": result.get("path"),
-            "edit_url": result.get("edit_path"),
+            "download_url": f"https://pitch-deck-ai.onrender.com/downloads/latest.pdf",
+            "edit_url": result.get("edit_path")
         })
 
     except Exception as e:
         print(f"❌ API Error: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+# ---------------- PDF GENERATOR ---------------- #
+@app.route("/downloads/latest.pdf", methods=["GET"])
+def download_generated_pdf():
+    """Generate a real PDF containing the last AI-generated slides"""
+    global last_generated_structure, last_company_info
+
+    if not last_generated_structure or not last_company_info:
+        return jsonify({"error": "No recent presentation found. Generate one first."}), 400
+
+    try:
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=15)
+
+        # Cover slide
+        pdf.add_page()
+        pdf.set_font("Arial", "B", 22)
+        pdf.cell(0, 80, f"Pitch Deck for {last_company_info.get('title')}", ln=True, align="C")
+        pdf.set_font("Arial", "", 14)
+        pdf.multi_cell(0, 10, f"Website: {last_company_info.get('url')}\n\n{last_company_info.get('description', '')}", align="C")
+
+        # Slides
+        slides = [s.strip() for s in last_generated_structure.split("\n\n") if s.strip()]
+        for slide in slides:
+            pdf.add_page()
+            lines = slide.split("\n")
+            title = lines[0].strip("# ").strip()
+            pdf.set_font("Arial", "B", 16)
+            pdf.cell(0, 10, title, ln=True, align="C")
+            pdf.ln(10)
+            pdf.set_font("Arial", "", 12)
+            for line in lines[1:]:
+                pdf.multi_cell(0, 8, line)
+
+        # Write to memory
+        pdf_bytes = io.BytesIO()
+        pdf.output(pdf_bytes)
+        pdf_bytes.seek(0)
+
+        print("✅ PDF generated successfully.")
+        return send_file(pdf_bytes, as_attachment=True, download_name="pitch_deck.pdf", mimetype="application/pdf")
+
+    except Exception as e:
+        print(f"❌ PDF generation error: {str(e)}")
+        return jsonify({"error": f"Failed to generate PDF: {str(e)}"}), 500
 
 # ---------------- ROOT ROUTE ---------------- #
 @app.route("/", methods=["GET"])
@@ -139,4 +196,5 @@ def home():
 # ---------------- RUN ---------------- #
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
 
