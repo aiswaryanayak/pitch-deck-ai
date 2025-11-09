@@ -3,4 +3,5 @@ flask-cors
 requests
 beautifulsoup4
 google-generativeai
+fpdf
 gunicorn
