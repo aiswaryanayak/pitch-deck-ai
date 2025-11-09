@@ -7,17 +7,17 @@ https://ai-fundraising-support.vercel.app
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import requests
 import os
+import requests
 from bs4 import BeautifulSoup
 import google.generativeai as genai
-from presenton_core.app import presenton_app
+from presenton_core.app import presenton_app, generate_presentation as local_generate
 
 # ---------------- FLASK APP ---------------- #
 app = Flask(__name__)
 CORS(app, origins=["https://ai-fundraising-support.vercel.app"])
 
-# Register local Presenton engine
+# Register the local Presenton simulation as a blueprint
 app.register_blueprint(presenton_app)
 
 # ---------------- CONFIG ---------------- #
@@ -32,7 +32,7 @@ model = genai.GenerativeModel(GEMINI_MODEL)
 
 # ---------------- SCRAPER ---------------- #
 def fetch_company_info(url: str):
-    """Extract basic company information from the given URL"""
+    """Extract basic company information from a given URL"""
     try:
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
@@ -60,7 +60,7 @@ def fetch_company_info(url: str):
 
 # ---------------- GEMINI STRUCTURE ---------------- #
 def generate_pitch_deck(company_info):
-    """Generate a full 10-slide pitch deck outline"""
+    """Generate a 10-slide investor-ready pitch deck outline"""
     prompt = f"""
 Create a 10-slide investor pitch deck in Markdown for:
 Company: {company_info.get('title')}
@@ -79,11 +79,11 @@ Slides:
 9. Team
 10. Funding Ask & Contact
 
-Keep it clear, concise, and professional.
+Keep it concise, insightful, and professionally structured.
 """
     try:
         response = model.generate_content(prompt)
-        print("✅ Gemini deck structure generated.")
+        print("✅ Gemini deck structure generated successfully.")
         return response.text.strip()
     except Exception as e:
         print(f"❌ Gemini Error: {str(e)}")
@@ -92,7 +92,7 @@ Keep it clear, concise, and professional.
 # ---------------- MAIN API ---------------- #
 @app.route("/generate", methods=["POST"])
 def generate_api():
-    """Endpoint for frontend to generate decks"""
+    """Main endpoint for frontend to generate pitch decks"""
     try:
         data = request.get_json(force=True)
         company_url = data.get("url")
@@ -107,13 +107,14 @@ def generate_api():
 
         structure = generate_pitch_deck(company_info)
 
-        print("🎨 Calling local Presenton simulation...")
-        response = requests.post(
-            "http://localhost:5000/api/v1/ppt/presentation/generate",
-            json={"content": structure, "n_slides": 10, "export_as": "pdf"},
-            timeout=120,
-        )
-        result = response.json()
+        print("🎨 Using internal Presenton simulation...")
+        # ✅ Call Presenton generator internally (no localhost call)
+        with app.test_request_context(json={
+            "content": structure,
+            "n_slides": 10,
+            "export_as": "pdf"
+        }):
+            result = local_generate().get_json()
 
         return jsonify({
             "success": True,
@@ -127,6 +128,7 @@ def generate_api():
         print(f"❌ API Error: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+# ---------------- ROOT ROUTE ---------------- #
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({
@@ -134,6 +136,7 @@ def home():
         "status": "running"
     })
 
+# ---------------- RUN ---------------- #
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
 
